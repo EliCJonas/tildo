@@ -1,0 +1,318 @@
+#!/bin/bash
+
+VERSION="1.4.2"
+PROGRAM_NAME="tildo"
+
+# Colors for output (bright variants)
+RED='\033[0;91m'
+GREEN='\033[0;92m'
+YELLOW='\033[0;93m'
+BLUE='\033[0;94m'
+NC='\033[0m' # No Color
+
+DATA="/home/$USER/.keg/data"
+BIN="/home/$USER/.keg/bin"
+LIB="/home/$USER/.keg/lib"
+INSTALLED="/home/$USER/.keg/installed"
+DESKTOP="/home/$USER/.keg/desktop"
+ICONS="/home/$USER/.keg/icons"
+
+# Print colored messages
+print_error() {
+    echo -e "${RED}Error: $1${NC}" >&2
+}
+
+print_success() {
+    echo -e "${GREEN}$1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}$1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}$1${NC}"
+}
+
+# Help command
+cmd_help() {
+    echo -e "${GREEN}"
+    cat << 'EOF'
+     ██  ███
+░░███░░██
+ ░░░  ░░
+EOF
+    echo -e "${NC}"
+    echo -e "              ${GREEN}tildo v${VERSION}${NC}"
+    echo -e "        ${BLUE}A simple package manager, optimized for tildes${NC}"
+    echo ""
+    echo -e "${YELLOW}Usage:${NC} $PROGRAM_NAME <command> [options] [packages...]"
+    echo ""
+    echo -e "${YELLOW}Commands:${NC}"
+    echo -e "  ${GREEN}install${NC} <file.keg...>  Install one or more .keg packages"
+    echo -e "  ${GREEN}remove${NC} <package...>    Remove installed packages"
+    echo -e "  ${GREEN}get${NC} <url...>           Download and install from URL"
+    echo -e "  ${GREEN}list${NC}                   List installed packages"
+    echo -e "  ${GREEN}help${NC}                   Show this help message"
+    echo ""
+    echo -e "${YELLOW}Examples:${NC}"
+    echo -e "  $PROGRAM_NAME install myapp.keg"
+    echo -e "  $PROGRAM_NAME get https://example.com/app.keg"
+    echo ""
+}
+
+# Install command
+cmd_install() {
+    if [[ $# -eq 0 ]]; then
+        print_error "No .keg file specified"
+        echo "Usage: $PROGRAM_NAME install <file.keg...>"
+        return 1
+    fi
+
+    for kegfile in "$@"; do
+        # Check if file exists
+        if [[ ! -f "$kegfile" ]]; then
+            print_error "File not found: $kegfile"
+            continue
+        fi
+
+        # Check if it's a .keg file
+        if [[ "$kegfile" != *.keg ]]; then
+            print_warning "File does not have .keg extension: $kegfile"
+        fi
+
+        print_info "Installing $kegfile..."
+
+        # Create temp directory for extraction
+        local temp_dir=$(mktemp -d)
+
+        # Unzip the .keg file
+        if ! unzip -q "$kegfile" -d "$temp_dir"; then
+            print_error "Failed to extract $kegfile"
+            rm -rf "$temp_dir"
+            continue
+        fi
+
+        # Find the package root (handles top-level folder from zip)
+        local pkg_root="$temp_dir"
+        if [[ -f "$temp_dir/keg-name.txt" ]]; then
+            pkg_root="$temp_dir"
+        else
+            # Look for keg-name.txt in a subdirectory
+            local found_root=$(find "$temp_dir" -name "keg-name.txt" -printf '%h\n' | head -1)
+            if [[ -n "$found_root" ]]; then
+                pkg_root="$found_root"
+            fi
+        fi
+
+        # Get package name
+        local pkg_name
+        if [[ -f "$pkg_root/keg-name.txt" ]]; then
+            pkg_name=$(cat "$pkg_root/keg-name.txt")
+        else
+            pkg_name=$(basename "$kegfile" .keg)
+        fi
+
+        # Prepare to track installed files
+        local bin_name=$(echo "$pkg_name" | tr '[:upper:]' '[:lower:]')
+
+        # Ensure directories exist (remove file if it conflicts)
+        for dir in "$INSTALLED" "$DATA" "$BIN"; do
+            if [[ -f "$dir" ]]; then
+                rm -f "$dir"
+            fi
+            mkdir -p "$dir"
+        done
+
+        local manifest="$INSTALLED/$bin_name.txt"
+        > "$manifest"  # Clear/create manifest
+
+        # Move data files to $DATA
+        if [[ -d "$pkg_root/data" ]]; then
+            for file in "$pkg_root/data/"*; do
+                if [[ -e "$file" ]]; then
+                    local basename=$(basename "$file")
+                    cp -r "$file" "$DATA/"
+                    echo "$DATA/$basename" >> "$manifest"
+                fi
+            done
+        fi
+
+        # Move library files to $LIB
+        if [[ -d "$pkg_root/lib" ]]; then
+            for file in "$pkg_root/lib/"*; do
+                if [[ -e "$file" ]]; then
+                    local basename=$(basename "$file")
+                    cp -r "$file" "$LIB/"
+                    echo "$LIB/$basename" >> "$manifest"
+                fi
+            done
+        fi
+
+        # Move root files (except keg-name.txt) to $BIN
+        for file in "$pkg_root/"*; do
+            local basename=$(basename "$file")
+            # Skip known directories and keg-name.txt
+            [[ -d "$file" ]] && continue
+            [[ "$basename" == "keg-name.txt" ]] && continue
+            cp "$file" "$BIN/$basename"
+            chmod +x "$BIN/$basename"
+            echo "$BIN/$basename" >> "$manifest"
+            # Symlink to ~/.local/bin for PATH accessibility
+        done
+
+        # Move .desktop files to applications directory
+        if [[ -d "$pkg_root/desktop" ]]; then
+            mkdir -p "$DESKTOP"
+            for file in "$pkg_root/desktop/"*; do
+                if [[ -e "$file" ]]; then
+                    local basename=$(basename "$file")
+                    cp "$file" "$DESKTOP/"
+                    echo "$DESKTOP/$basename" >> "$manifest"
+                fi
+            done
+        fi
+
+        # Symlink icons to hicolor theme
+        if [[ -d "$pkg_root/icons" ]]; then
+            mkdir -p "$ICONS"
+            for file in "$pkg_root/icons/"*.png; do
+                if [[ -e "$file" ]]; then
+                    local basename=$(basename "$file")
+                    cp "$file" "$DATA/"
+                    ln -sf "$DATA/$basename" "$ICONS/$basename"
+                    echo "$DATA/$basename" >> "$manifest"
+                    echo "$ICONS/$basename" >> "$manifest"
+                fi
+            done
+            gtk-update-icon-cache "$REAL_HOME/.local/share/icons/hicolor" 2>/dev/null
+        fi
+
+        # Cleanup temp directory
+        rm -rf "$temp_dir"
+
+        print_success "Successfully installed $kegfile"
+    done
+}
+
+# Remove command
+cmd_remove() {
+    if [[ $# -eq 0 ]]; then
+        print_error "No package specified"
+        echo "Usage: $PROGRAM_NAME remove <package...>"
+        return 1
+    fi
+
+    for pkg_name in "$@"; do
+        local bin_name=$(echo "$pkg_name" | tr '[:upper:]' '[:lower:]')
+        local manifest="$INSTALLED/$bin_name.txt"
+
+        if [[ ! -f "$manifest" ]]; then
+            print_error "Package '$pkg_name' is not installed"
+            continue
+        fi
+
+        print_info "Removing $pkg_name..."
+
+        # Remove each file listed in the manifest
+        while IFS= read -r file; do
+            if [[ -e "$file" || -L "$file" ]]; then
+                rm -rf "$file"
+            fi
+        done < "$manifest"
+
+        # Update icon cache if icons were removed
+        if grep -q "$ICONS" "$manifest" 2>/dev/null; then
+            gtk-update-icon-cache "$REAL_HOME/.local/share/icons/hicolor" 2>/dev/null
+        fi
+
+        # Remove the manifest
+        rm -f "$manifest"
+
+        print_success "Successfully removed $pkg_name"
+    done
+}
+
+# List command
+cmd_list() {
+    if [[ ! -d "$INSTALLED" ]]; then
+        print_info "No packages installed"
+        return 0
+    fi
+
+    local packages=("$INSTALLED"/*.txt)
+
+    if [[ ! -e "${packages[0]}" ]]; then
+        print_info "No packages installed"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Installed packages:${NC}"
+    for manifest in "${packages[@]}"; do
+        local pkg_name=$(basename "$manifest" .txt)
+        echo -e "  ${GREEN}$pkg_name${NC}"
+    done
+}
+
+# Get command (download and install)
+cmd_get() {
+    if [[ $# -eq 0 ]]; then
+        print_error "No packages specified"
+        echo "Usage: $PROGRAM_NAME get <url...>"
+        return 1
+    fi
+
+    for package in "$@"; do
+        print_info "Downloading $package..."
+
+        # Get the filename from the URL
+        local filename=$(basename "$package")
+
+        if wget -q "$package" -O "$filename"; then
+            print_success "Successfully downloaded $filename"
+            # Automatically install the downloaded .keg file
+            cmd_install "$filename"
+        else
+            print_error "Failed to download $package"
+        fi
+    done
+}
+
+# Main command parser
+main() {
+    if [[ $# -eq 0 ]]; then
+        cmd_help
+        exit 0
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        install)
+            cmd_install "$@"
+            ;;
+        remove)
+            cmd_remove "$@"
+            ;;
+        get)
+            cmd_get "$@"
+            ;;
+        list)
+            cmd_list
+            ;;
+        help|--help|-h)
+            cmd_help
+            ;;
+        --version|-v)
+            echo "$PROGRAM_NAME version $VERSION"
+            ;;
+        *)
+            print_error "Unknown command: $command"
+            echo "Run '$PROGRAM_NAME help' for usage information"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
