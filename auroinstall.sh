@@ -1,5 +1,5 @@
 echo "This script will install Tildo, Auro for tildes. I hope you enjoy :D"
-echo "Please report any issues with the program in the BBJ post."
+echo "Please report any issues with the program in the BBJ post on tilde.club or in the GitHub issues."
 echo "Tildo is compatible with any Auro package that runs in the command line and does not need special shared libraries."
 echo "Push enter to begin."
 read
