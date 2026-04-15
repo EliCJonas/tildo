@@ -11,7 +11,7 @@ echo "Creating folders..."
 mkdir bin lib icons desktop installed data
 cd bin
 echo "Installing Tildo..."
-wget https://github.com/EliCJonas/tildo/blob/40f1cd7a1ff27f72eb0ef335aa6ec6049528a63d/tildo
+wget https://github.com/EliCJonas/tildo/raw/refs/heads/main/tildo
 cd ~
 echo "Remember to add ~/.keg/bin/ to your PATH"
 
