@@ -12,4 +12,8 @@
 
 ---
 
+```sh
+curl https://github.com/EliCJonas/tildo/blob/fd85d55e4641f9784039501eafc99eb0cd8830d6/auroinstall.sh | bash
+```
+
 To update, simply run install.sh again.
